@@ -22,7 +22,7 @@ The port can be any port you like, as long as the client connects to the same po
 
 ## Create a virtual environment
 ```shell
-python3 -m venv venv
+python -m venv venv
 ```
 
 ## Activate the virtual enviroment
