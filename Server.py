@@ -2,12 +2,17 @@ import argparse
 import os
 import socket
 import threading
+from threading import Lock
 
 import cv2
 import pickle
 import struct
 
 import Logger
+
+CAMERA_CLIENTS = {} # map ADDR -> frames
+CAMERA_DISPLAYS = {} # map ADDR -> conn
+CAMERA_THREADS = {} # map ADDR -> thread
 
 def load_env():
     if not os.path.exists('.env') and not os.path.exists('../.env'):
@@ -45,11 +50,11 @@ def load_env():
 
     return result
 
-def on_client_connected(conn, addr, output_video_path):
-    print(f'New client connected through address {addr}!')
+def on_client_connected(conn, addr, output_video_path, thread_lock):
+    Logger.success(f'New client connected through address {addr}!')
 
     connected = True
-    video_frames = []
+    #video_frames = []
 
     # TODO: receive from client in init phase
     frame_width = 640
@@ -62,37 +67,47 @@ def on_client_connected(conn, addr, output_video_path):
         if msg is None:
             continue
 
-        print(msg)
-        msg = msg.decode('utf-8')
-        if len(msg) > 0:
-            print(msg)
+        try:
+            msg = msg.decode('utf-8')
+            if len(msg) > 0:
+                Logger.debug(f'{addr}: {msg}')
+        except Exception as e:
+            # The initial message is not a string
+            Logger.warn('Unhandled 64 bytes!!!')
+            continue
 
         if msg == 'join':
-            print('Client wants to connect...')
+            Logger.info(f'{addr}: Client wants to connect...')
+        elif msg == 'camera':
+            Logger.info(f'{addr}: registered as CAMERA.')
+            # initialize the map with the current address, so that later this entry can be filled with frames.
+            thread_lock.acquire()
+            CAMERA_CLIENTS[addr] = []
+            thread_lock.release()
+        elif msg == 'display':
+            Logger.info(f'{addr}: registered as DISPLAY.')
+
+            # store the connection for later, when broadcasting all frames to this client.
+            thread_lock.acquire()
+            CAMERA_DISPLAYS[addr] = conn
+            thread_lock.release()
         elif msg == 'leave':
             data = ""
-            print('Client wants to disconnect...')
+            Logger.info(f'{addr}: Client wants to disconnect...')
             connected = False
 
             # store video
-            print(f'Saving stream to {output_video_path}...')
-
-        #    with open(f'{output_video_path}/filename.mp4', 'wb') as f:
-        #        print(len(video_frames))
-        #        for frame in video_frames:
-        #            f.write(frame)
-
-
+            Logger.info(f'Saving stream to {output_video_path}/filename.mp4...')
             out = cv2.VideoWriter(f'{output_video_path}/filename.mp4', cv2.VideoWriter_fourcc(*'MP4V'),
                                      30, (frame_width, frame_height))
 
-            for image in video_frames:
+            for image in CAMERA_CLIENTS[addr]:
                 out.write(image)
 
             out.release()
 
         elif msg == 'stream':
-            print('Client sends more stream data...')
+            Logger.info(f'{addr}: Client sends stream data...')
 
             while len(data) < payload_size:
                 data += conn.recv(4096)
@@ -111,18 +126,28 @@ def on_client_connected(conn, addr, output_video_path):
         #    cv2.imshow('Server frame', frame)
         #    cv2.waitKey(1)
 
-            video_frames.append(frame)
+            thread_lock.acquire()
+            CAMERA_CLIENTS[addr].append(frame)
+            thread_lock.release()
+
+        # TODO: broadcast to every display the current frames of every camera
+        for display_address, display_connection in CAMERA_DISPLAYS:
+            # TODO: iterate over all camera clients and send their frames, maybe all packed into one message?
+            for camera_address, camera_frames in CAMERA_CLIENTS:
+                pass
 
     conn.close()
 
 
 def main(output_video_path, verbose_logging, envs):
-    print('Running server and using ' + output_video_path + ' as the video output path...')
+    Logger.success('Running server and using ' + output_video_path + ' as the video output path...')
     if verbose_logging:
-        print('Verbose logging enabled.')
+        Logger.success('Verbose logging enabled.')
 
     server_address = envs['SERVER_ADDRESS']
     server_port = int(envs['SERVER_PORT'])
+
+    thread_lock = Lock()
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.bind((server_address, server_port))
@@ -131,13 +156,13 @@ def main(output_video_path, verbose_logging, envs):
 
     while True:
         conn, addr = server_socket.accept()
-        client_thread = threading.Thread(target=on_client_connected, args=[conn, addr, output_video_path])
+        client_thread = threading.Thread(target=on_client_connected, args=[conn, addr, output_video_path, thread_lock])
         client_thread.start()
 
-    print('Shutting down main application...')
+    Logger.success('Shutting down main application...')
 
 def run_cli(output_video_path, vervose_logging, envs):
-    print('Starting command line interface...')
+    Logger.success('Starting command line interface...')
 
 
 if __name__ == '__main__':
