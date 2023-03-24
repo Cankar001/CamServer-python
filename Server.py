@@ -1,7 +1,10 @@
 import argparse
 import os
 import socket
+import sys
 import threading
+
+import multiprocessing
 from threading import Lock
 
 import cv2
@@ -13,6 +16,12 @@ import Logger
 CAMERA_CLIENTS = {} # map ADDR -> frames
 CAMERA_DISPLAYS = {} # map ADDR -> conn
 CAMERA_THREADS = {} # map ADDR -> thread
+
+# determines, whether the server should continue listening for new clients
+# should be changeable through the CLI
+ACCEPT_CLIENTS = True
+
+MULTI_PROCESS_LOCK = None
 
 def load_env():
     if not os.path.exists('.env') and not os.path.exists('../.env'):
@@ -51,6 +60,9 @@ def load_env():
     return result
 
 def on_client_connected(conn, addr, output_video_path, thread_lock):
+    global CAMERA_CLIENTS
+    global CAMERA_DISPLAYS
+
     Logger.success(f'New client connected through address {addr}!')
 
     connected = True
@@ -140,6 +152,8 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
 
 
 def main(output_video_path, verbose_logging, envs):
+    global ACCEPT_CLIENTS
+
     Logger.success('Running server and using ' + output_video_path + ' as the video output path...')
     if verbose_logging:
         Logger.success('Verbose logging enabled.')
@@ -155,14 +169,61 @@ def main(output_video_path, verbose_logging, envs):
     Logger.info(f'Listening at {server_address}:{server_port}...')
 
     while True:
+        if not ACCEPT_CLIENTS:
+            break
+
         conn, addr = server_socket.accept()
         client_thread = threading.Thread(target=on_client_connected, args=[conn, addr, output_video_path, thread_lock])
+        CAMERA_THREADS[addr] = client_thread
         client_thread.start()
 
     Logger.success('Shutting down main application...')
+    for camera_addr, thread in CAMERA_THREADS:
+        thread.join()
 
-def run_cli(output_video_path, vervose_logging, envs):
+
+def cli_main(conn, new_fd):
+    sys.stdin = os.fdopen(new_fd)
+
+    while True:
+        try:
+            text = input('CLI > ')
+        except KeyboardInterrupt as e:
+            break
+
+        if text.lower() == 'version':
+            Logger.info(f'Version: 1.0.0')
+        elif text.lower() == 'quit':
+            # Stop the other thread too, which is listening for new connections
+            conn.send(False)
+            conn.close()
+            break
+
+def run_cli(output_video_path, verbose_logging, envs):
+    global ACCEPT_CLIENTS
     Logger.success('Starting command line interface...')
+
+    main_process = multiprocessing.Process(target=main, args=[output_video_path, verbose_logging, envs])
+    main_process.start()
+
+    parent_conn, child_conn = multiprocessing.Pipe()
+    process = multiprocessing.Process(target=cli_main, args=(child_conn, sys.stdin.fileno()))
+    process.start()
+
+    try:
+        # receive, whether to continue accepting clients
+        ACCEPT_CLIENTS = parent_conn.recv()
+    except KeyboardInterrupt as e:
+        # hard shutdown
+        process.kill()
+        main_process.kill()
+
+    if not ACCEPT_CLIENTS:
+        Logger.info('Shutting down the server...')
+        main_process.kill()
+
+    Logger.info('Shutting down the CLI...')
+    process.kill()
 
 
 if __name__ == '__main__':
@@ -179,6 +240,7 @@ if __name__ == '__main__':
     # load environment file
     envs = load_env()
     if args.verbose:
+        Logger.enableDebugger()
         Logger.debug(envs)
 
     if args.with_command_line_interface:
