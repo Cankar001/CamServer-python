@@ -140,6 +140,7 @@ def main(output_video_path, verbose_logging, envs):
 
     while True:
         if not ACCEPT_CLIENTS:
+            Logger.info('Application requested to shutdown')
             break
 
         conn, addr = server_socket.accept()
@@ -147,7 +148,10 @@ def main(output_video_path, verbose_logging, envs):
         CAMERA_THREADS[addr] = client_thread
         client_thread.start()
 
-    Logger.success('Shutting down main application...')
+    # TODO: find a better solution for this
+    #       if CLI is enabled and the application requested to shutdown, the process gets killed
+    #       so this will never be called...
+    Logger.info('Shutting down main application...')
     for camera_addr, thread in CAMERA_THREADS:
         thread.join()
 
@@ -183,15 +187,15 @@ def run_cli(output_video_path, verbose_logging, envs):
     main_process.start()
 
     parent_conn, child_conn = multiprocessing.Pipe()
-    process = multiprocessing.Process(target=cli_main, args=(child_conn, sys.stdin.fileno()))
-    process.start()
+    cli_process = multiprocessing.Process(target=cli_main, args=(child_conn, sys.stdin.fileno()))
+    cli_process.start()
 
     try:
         # receive, whether to continue accepting clients
         ACCEPT_CLIENTS = parent_conn.recv()
     except KeyboardInterrupt as e:
         # hard shutdown
-        process.kill()
+        cli_process.kill()
         main_process.kill()
 
     if not ACCEPT_CLIENTS:
@@ -199,7 +203,7 @@ def run_cli(output_video_path, verbose_logging, envs):
         main_process.kill()
 
     Logger.info('Shutting down the CLI...')
-    process.kill()
+    cli_process.kill()
 
 
 if __name__ == '__main__':
