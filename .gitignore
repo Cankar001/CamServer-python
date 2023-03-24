@@ -1,5 +1,5 @@
 .env
-env/
+venv/
 image.jpg
 .idea/
 flask_session/

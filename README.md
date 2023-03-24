@@ -22,16 +22,16 @@ The port can be any port you like, as long as the client connects to the same po
 
 ## Create a virtual environment
 ```shell
-python3 -m venv env
+python3 -m venv venv
 ```
 
 ## Activate the virtual enviroment
 ```shell
 # on windows
-.\env\Scripts\activate.bat
+.\venv\Scripts\activate.bat
 
 # on linux
-source ./env/bin/activate
+source ./venv/bin/activate
 ```
 
 ## Check if environment has been activated
@@ -51,3 +51,9 @@ pip install -r requirements.txt
 pipenv run python Server.py ./uploads
 ```
 
+# Troubleshooting
+
+I discovered, that the virtualenv doesn't seem to like the powershell, 
+I couldn't get it working in it.
+
+But using a bash on windows, using `source ./venv/Scripts/activate` worked perfectly fine.
