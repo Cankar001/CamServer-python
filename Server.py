@@ -12,6 +12,7 @@ import pickle
 import struct
 
 import Logger
+import EnvironmentLoader
 
 CAMERA_CLIENTS = {} # map ADDR -> frames
 CAMERA_DISPLAYS = {} # map ADDR -> conn
@@ -21,45 +22,10 @@ CAMERA_THREADS = {} # map ADDR -> thread
 # should be changeable through the CLI
 ACCEPT_CLIENTS = True
 
-MULTI_PROCESS_LOCK = None
-
-def load_env():
-    if not os.path.exists('.env') and not os.path.exists('../.env'):
-        Logger.error('Could not find any .env in the current or parent folder!')
-        return dict()
-
-    result = dict()
-
-    # Load text content
-    env_text = ''
-    if os.path.exists('.env'):
-        with open('.env', 'r') as f:
-            env_text = f.readlines()
-
-    if len(env_text) == 0 and os.path.exists('../.env'):
-        with open('../.env', 'r') as f:
-            env_text = f.readlines()
-
-    if len(env_text) == 0:
-        Logger.error('Could not load env file!')
-        return dict()
-
-    for line in env_text:
-        if line == '\n':
-            continue
-
-        if line.endswith('\n'):
-            line = line.strip('\n')
-
-        key_value_pairs = line.split('=')
-        key = key_value_pairs[0]
-        value = key_value_pairs[1]
-
-        result[key] = value
-
-    return result
-
 def on_client_connected(conn, addr, output_video_path, thread_lock):
+    """
+    This function handles the connected clients and runs in its own thread.
+    """
     global CAMERA_CLIENTS
     global CAMERA_DISPLAYS
 
@@ -152,6 +118,10 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
 
 
 def main(output_video_path, verbose_logging, envs):
+    """
+    This is the global main function, that executes the server and listens for new connections.
+    If the CLI is enabled, this function runs in its own process, otherwise it runs on the main process.
+    """
     global ACCEPT_CLIENTS
 
     Logger.success('Running server and using ' + output_video_path + ' as the video output path...')
@@ -183,6 +153,9 @@ def main(output_video_path, verbose_logging, envs):
 
 
 def cli_main(conn, new_fd):
+    """
+    The main function for the CLI, which runs in its own process.
+    """
     sys.stdin = os.fdopen(new_fd)
 
     while True:
@@ -200,6 +173,9 @@ def cli_main(conn, new_fd):
             break
 
 def run_cli(output_video_path, verbose_logging, envs):
+    """
+    starter function for the CLI, which is still executed on the main process.
+    """
     global ACCEPT_CLIENTS
     Logger.success('Starting command line interface...')
 
@@ -238,7 +214,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # load environment file
-    envs = load_env()
+    envs = EnvironmentLoader.load()
     if args.verbose:
         Logger.enableDebugger()
         Logger.debug(envs)
