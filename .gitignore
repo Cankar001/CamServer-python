@@ -1,0 +1,8 @@
+.env
+env/
+image.jpg
+.idea/
+flask_session/
+__pycache__/
+Uploads/
+profiles/
