@@ -37,7 +37,7 @@ source ./venv/bin/activate
 ## Check if environment has been activated
 ```shell
 # This command should show the python path,
-# pointing to your env folder
+# pointing to your venv folder
 pip --version
 ```
 
