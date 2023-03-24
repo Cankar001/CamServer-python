@@ -13,6 +13,7 @@ import struct
 
 import Logger
 import EnvironmentLoader
+import FilenameGenerator
 
 CAMERA_CLIENTS = {} # map ADDR -> frames
 CAMERA_DISPLAYS = {} # map ADDR -> conn
@@ -32,9 +33,6 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
     Logger.success(f'New client connected through address {addr}!')
 
     connected = True
-    #video_frames = []
-
-    # TODO: receive from client in init phase
     frame_width = 640
     frame_height = 480
 
@@ -51,14 +49,21 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
                 Logger.debug(f'{addr}: {msg}')
         except Exception as e:
             # The initial message is not a string
-            Logger.warn('Unhandled 64 bytes!!!')
-            continue
+            Logger.warn(f'Unhandled 64 bytes!!! {msg}')
 
         if msg == 'join':
             Logger.info(f'{addr}: Client wants to connect...')
         elif msg == 'camera':
             Logger.info(f'{addr}: registered as CAMERA.')
             # initialize the map with the current address, so that later this entry can be filled with frames.
+
+            # receive the client width and height as well
+            dimension = str(conn.recv(16).decode('utf-8'))
+            dimensions = dimension.split('x')
+            frame_width = int(dimensions[0])
+            frame_height = int(dimensions[1])
+            Logger.success(f'Server received video dimensions: {frame_width}x{frame_height}')
+
             thread_lock.acquire()
             CAMERA_CLIENTS[addr] = []
             thread_lock.release()
@@ -69,21 +74,36 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
             thread_lock.acquire()
             CAMERA_DISPLAYS[addr] = conn
             thread_lock.release()
+        elif msg == 'display_leave':
+            Logger.info(f'{addr}: Display wants to disconnect...')
+            # remove the reference from the client connections
+            thread_lock.acquire()
+            del CAMERA_DISPLAYS[addr]
+            thread_lock.release()
         elif msg == 'leave':
-            data = ""
+            data = b''
             Logger.info(f'{addr}: Client wants to disconnect...')
             connected = False
 
-            # store video
-            Logger.info(f'Saving stream to {output_video_path}/filename.mp4...')
-            out = cv2.VideoWriter(f'{output_video_path}/filename.mp4', cv2.VideoWriter_fourcc(*'MP4V'),
-                                     30, (frame_width, frame_height))
+            # receive, whether any motion was detected
+            motion_detected = str(conn.recv(32).decode('utf-8'))
+            if motion_detected == 'motion_detected':
+                # store video
+                file_name = FilenameGenerator.generate('video')
+                Logger.info(f'Saving stream to {output_video_path}/{file_name}.mp4...')
+                out = cv2.VideoWriter(f'{output_video_path}/{file_name}.mp4', cv2.VideoWriter_fourcc(*'MP4V'),
+                                         30, (frame_width, frame_height))
 
-            for image in CAMERA_CLIENTS[addr]:
-                out.write(image)
+                for image in CAMERA_CLIENTS[addr]:
+                    out.write(image)
 
-            out.release()
+                Logger.success(f'Video {file_name} successfully saved!')
+                out.release()
 
+            # remove the reference from the client connections
+            thread_lock.acquire()
+            del CAMERA_CLIENTS[addr]
+            thread_lock.release()
         elif msg == 'stream':
             Logger.info(f'{addr}: Client sends stream data...')
 
@@ -101,8 +121,8 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
             data = data[msg_size:]
             frame = pickle.loads(frame_data)
 
-        #    cv2.imshow('Server frame', frame)
-        #    cv2.waitKey(1)
+            cv2.imshow('Server frame', frame)
+            cv2.waitKey(1)
 
             thread_lock.acquire()
             CAMERA_CLIENTS[addr].append(frame)
