@@ -4,5 +4,6 @@ image.jpg
 .idea/
 flask_session/
 __pycache__/
-Uploads/
+uploads/
+!uploads/.gitkeep
 profiles/
