@@ -23,6 +23,11 @@ CAMERA_THREADS = {} # map ADDR -> thread
 # should be changeable through the CLI
 ACCEPT_CLIENTS = True
 
+TARGET_KEY_FRAMES = EnvironmentLoader.loadByKey('OUTPUT_KEYFRAMES')
+if TARGET_KEY_FRAMES is None:
+    Logger.error('Error: You forgot to set the target key frames in your .env file!')
+    exit(0)
+
 def on_client_connected(conn, addr, output_video_path, thread_lock):
     """
     This function handles the connected clients and runs in its own thread.
@@ -33,11 +38,13 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
     Logger.success(f'New client connected through address {addr}!')
 
     connected = True
-    frame_width = 640
-    frame_height = 480
 
     payload_size = struct.calcsize("L")
     data = b''
+    out_video = None # will be set when initializing client
+    frame_width = 0
+    frame_height = 0
+
     while connected:
         msg = conn.recv(64)
         if msg is None:
@@ -51,11 +58,8 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
             # The initial message is not a string
             Logger.warn(f'Unhandled 64 bytes!!! {msg}')
 
-        if msg == 'join':
-            Logger.info(f'{addr}: Client wants to connect...')
-        elif msg == 'camera':
-            Logger.info(f'{addr}: registered as CAMERA.')
-            # initialize the map with the current address, so that later this entry can be filled with frames.
+        if msg == 'camera_join':
+            Logger.info(f'{addr}: Camera wants to connect...')
 
             # receive the client width and height as well
             dimension = str(conn.recv(16).decode('utf-8'))
@@ -64,12 +68,15 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
             frame_height = int(dimensions[1])
             Logger.success(f'Server received video dimensions: {frame_width}x{frame_height}')
 
+            file_name = FilenameGenerator.generate('video')
+            out_video = cv2.VideoWriter(f'{output_video_path}/{file_name}.mp4', cv2.VideoWriter_fourcc(*'MP4V'),
+                            int(TARGET_KEY_FRAMES), (frame_width, frame_height))
+
             thread_lock.acquire()
             CAMERA_CLIENTS[addr] = []
             thread_lock.release()
-        elif msg == 'display':
-            Logger.info(f'{addr}: registered as DISPLAY.')
-
+        elif msg == 'display_join':
+            Logger.info(f'{addr}: Display wants to connect...')
             # store the connection for later, when broadcasting all frames to this client.
             thread_lock.acquire()
             CAMERA_DISPLAYS[addr] = conn
@@ -80,30 +87,32 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
             thread_lock.acquire()
             del CAMERA_DISPLAYS[addr]
             thread_lock.release()
-        elif msg == 'leave':
+        elif msg == 'camera_leave':
             data = b''
-            Logger.info(f'{addr}: Client wants to disconnect...')
+            Logger.info(f'{addr}: Camera wants to disconnect...')
             connected = False
+            cv2.destroyAllWindows()
 
             # receive, whether any motion was detected
             motion_detected = str(conn.recv(32).decode('utf-8'))
             if motion_detected == 'motion_detected':
-                # store video
+                out_video.release() # store video
+            elif motion_detected == 'motion_not_detected':
+                # reinitialize video to loose all appended frames
                 file_name = FilenameGenerator.generate('video')
-                Logger.info(f'Saving stream to {output_video_path}/{file_name}.mp4...')
-                out = cv2.VideoWriter(f'{output_video_path}/{file_name}.mp4', cv2.VideoWriter_fourcc(*'MP4V'),
-                                         30, (frame_width, frame_height))
-
-                for image in CAMERA_CLIENTS[addr]:
-                    out.write(image)
-
-                Logger.success(f'Video {file_name} successfully saved!')
-                out.release()
+                out_video = cv2.VideoWriter(f'{output_video_path}/{file_name}.mp4', cv2.VideoWriter_fourcc(*'MP4V'),
+                                            int(TARGET_KEY_FRAMES), (frame_width, frame_height))
 
             # remove the reference from the client connections
             thread_lock.acquire()
             del CAMERA_CLIENTS[addr]
             thread_lock.release()
+        elif msg == 'store_video':
+            Logger.info(f'{addr}: Storing video and re-initializing video feed...')
+            out_video.release()
+            file_name = FilenameGenerator.generate('video')
+            out_video = cv2.VideoWriter(f'{output_video_path}/{file_name}.mp4', cv2.VideoWriter_fourcc(*'MP4V'),
+                                        int(TARGET_KEY_FRAMES), (frame_width, frame_height))
         elif msg == 'stream':
             Logger.info(f'{addr}: Client sends stream data...')
 
@@ -127,6 +136,9 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
             thread_lock.acquire()
             CAMERA_CLIENTS[addr].append(frame)
             thread_lock.release()
+
+            # store video frame
+            out_video.write(frame)
 
         # TODO: broadcast to every display the current frames of every camera
         for display_address, display_connection in CAMERA_DISPLAYS:
