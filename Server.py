@@ -41,6 +41,7 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
 
     payload_size = struct.calcsize("L")
     data = b''
+    data_flagged_as_video_bytes = False
     out_video = None # will be set when initializing client
     frame_width = 0
     frame_height = 0
@@ -55,8 +56,10 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
             if len(msg) > 0:
                 Logger.debug(f'{addr}: {msg}')
         except Exception as e:
-            # The initial message is not a string
-            Logger.warn(f'Unhandled 64 bytes!!! {msg}')
+            # The initial message is not a string,
+            # assume these are video bytes
+            data = msg
+            data_flagged_as_video_bytes = True
 
         if msg == 'camera_join':
             Logger.info(f'{addr}: Camera wants to connect...')
@@ -113,8 +116,9 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
             file_name = FilenameGenerator.generate('video')
             out_video = cv2.VideoWriter(f'{output_video_path}/{file_name}.mp4', cv2.VideoWriter_fourcc(*'MP4V'),
                                         int(TARGET_KEY_FRAMES), (frame_width, frame_height))
-        elif msg == 'stream':
+        elif msg == 'stream' or data_flagged_as_video_bytes:
             Logger.info(f'{addr}: Client sends stream data...')
+            data_flagged_as_video_bytes = False
 
             while len(data) < payload_size:
                 data += conn.recv(4096)
