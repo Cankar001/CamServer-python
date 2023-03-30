@@ -47,8 +47,12 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
     frame_height = 0
 
     while connected:
-        msg = conn.recv(64)
-        if msg is None:
+        try:
+            msg = conn.recv(64)
+            if msg is None:
+                continue
+        except ConnectionResetError:
+            connected = False
             continue
 
         try:
@@ -99,7 +103,9 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
             # receive, whether any motion was detected
             motion_detected = str(conn.recv(32).decode('utf-8'))
             if motion_detected == 'motion_detected':
-                out_video.release() # store video
+                # only store video, if client sent frames
+                if len(CAMERA_CLIENTS[addr]) > 0:
+                    out_video.release() # store video
             elif motion_detected == 'motion_not_detected':
                 # reinitialize video to loose all appended frames
                 file_name = FilenameGenerator.generate('video')
