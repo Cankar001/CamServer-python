@@ -15,9 +15,9 @@ import Logger
 import EnvironmentLoader
 import FilenameGenerator
 
-CAMERA_CLIENTS = {} # map ADDR -> frames
-CAMERA_DISPLAYS = {} # map ADDR -> conn
-CAMERA_THREADS = {} # map ADDR -> thread
+CAMERA_CLIENTS = {}  # map ADDR -> frames
+CAMERA_DISPLAYS = {}  # map ADDR -> conn
+CAMERA_THREADS = {}  # map ADDR -> thread
 
 # determines, whether the server should continue listening for new clients
 # should be changeable through the CLI
@@ -27,6 +27,7 @@ TARGET_KEY_FRAMES = EnvironmentLoader.loadByKey('OUTPUT_KEYFRAMES')
 if TARGET_KEY_FRAMES is None:
     Logger.error('Error: You forgot to set the target key frames in your .env file!')
     exit(0)
+
 
 def on_client_connected(conn, addr, output_video_path, thread_lock):
     """
@@ -42,7 +43,8 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
     payload_size = struct.calcsize("L")
     data = b''
     data_flagged_as_video_bytes = False
-    out_video = None # will be set when initializing client
+
+    # will be set when initializing client
     frame_width = 0
     frame_height = 0
 
@@ -75,10 +77,6 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
             frame_height = int(dimensions[1])
             Logger.success(f'Server received video dimensions: {frame_width}x{frame_height}')
 
-            file_name = FilenameGenerator.generate('video')
-            out_video = cv2.VideoWriter(f'{output_video_path}/{file_name}.mp4', cv2.VideoWriter_fourcc(*'MP4V'),
-                            int(TARGET_KEY_FRAMES), (frame_width, frame_height))
-
             thread_lock.acquire()
             CAMERA_CLIENTS[addr] = []
             thread_lock.release()
@@ -103,14 +101,8 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
             # receive, whether any motion was detected
             motion_detected = str(conn.recv(32).decode('utf-8'))
             if motion_detected == 'motion_detected':
-                # only store video, if client sent frames
-                if len(CAMERA_CLIENTS[addr]) > 0:
-                    out_video.release() # store video
-            elif motion_detected == 'motion_not_detected':
-                # reinitialize video to loose all appended frames
-                file_name = FilenameGenerator.generate('video')
-                out_video = cv2.VideoWriter(f'{output_video_path}/{file_name}.mp4', cv2.VideoWriter_fourcc(*'MP4V'),
-                                            int(TARGET_KEY_FRAMES), (frame_width, frame_height))
+                # TODO: make any sort of notification?
+                pass
 
             # remove the reference from the client connections
             thread_lock.acquire()
@@ -118,10 +110,15 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
             thread_lock.release()
         elif msg == 'store_video':
             Logger.info(f'{addr}: Storing video and re-initializing video feed...')
-            out_video.release()
             file_name = FilenameGenerator.generate('video')
-            out_video = cv2.VideoWriter(f'{output_video_path}/{file_name}.mp4', cv2.VideoWriter_fourcc(*'MP4V'),
-                                        int(TARGET_KEY_FRAMES), (frame_width, frame_height))
+            video = cv2.VideoWriter(f'{output_video_path}/{file_name}.mp4', cv2.VideoWriter_fourcc(*'MP4V'),
+                                    int(TARGET_KEY_FRAMES), (frame_width, frame_height))
+
+            for frame in CAMERA_CLIENTS[addr]:
+                video.write(frame)
+
+            video.release()
+
         elif msg == 'stream' or data_flagged_as_video_bytes:
             Logger.info(f'{addr}: Client sends stream data...')
             data_flagged_as_video_bytes = False
@@ -146,9 +143,6 @@ def on_client_connected(conn, addr, output_video_path, thread_lock):
             thread_lock.acquire()
             CAMERA_CLIENTS[addr].append(frame)
             thread_lock.release()
-
-            # store video frame
-            out_video.write(frame)
 
         # TODO: broadcast to every display the current frames of every camera
         for display_address, display_connection in CAMERA_DISPLAYS:
@@ -217,6 +211,7 @@ def cli_main(conn, new_fd):
             conn.send(False)
             conn.close()
             break
+
 
 def run_cli(output_video_path, verbose_logging, envs):
     """
